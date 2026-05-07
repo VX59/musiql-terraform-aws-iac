@@ -2,8 +2,204 @@ resource "aws_s3_bucket" "musiql_bucket" {
     bucket = "musiql-s3-bucket"
 }
 
-resource "aws_sqs_queue" "musiql_uploads_queue" {
-    name = "RecordingServerQueue"
-    max_message_size = 1048576
-    visibility_timeout_seconds = 30
+resource "aws_vpc" "musiql_vpc" {
+    cidr_block = "10.0.0.0/16"
+    enable_dns_hostnames = true
+    enable_dns_support = true
+
+    tags = {
+        Name = "musiql-vpc"
+    }
+}
+
+resource "aws_subnet" "private_a" {
+    vpc_id = aws_vpc.musiql_vpc.id
+    cidr_block = "10.0.1.0/24"
+    availability_zone = "us-east-2a"
+
+    tags = {
+        Name = "musiql-private-a"
+    }
+}
+
+resource "aws_subnet" "private_b" {
+    vpc_id = aws_vpc.musiql_vpc.id
+    cidr_block = "10.0.2.0/24"
+    availability_zone = "us-east-2b"
+
+    tags = {
+        Name = "musiql-private-b"
+    }
+}
+
+# S3 Gateway Endpoint
+resource "aws_vpc_endpoint" "s3" {
+    vpc_id = aws_vpc.musiql_vpc.id
+    service_name = "com.amazonaws.us-east-2.s3"
+
+    tags = {
+        Name = "musiql-s3-endpoint"
+    }
+}
+
+resource "aws_db_subnet_group" "musiql_db_subnet_group" {
+    name = "musiql-db-subnet-group"
+    subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+
+    tags = {
+        Name = "musiql-db-subnet-group"
+    }
+}
+
+resource "aws_security_group" "rds_sg" {
+    name = "musiql-rds-sg"
+    description = "Allow Postgress access from recording server and Lambda"
+    vpc_id = aws_vpc.musiql_vpc.id
+
+    ingress {
+        description = "Postgres from recording server"
+        from_port = 5432
+        to_port = 5432
+        protocol = "tcp"
+        cidr_blocks = [var.recording_server_ip]
+    }
+
+    ingress {
+        description = "Postgres from Lambda"
+        from_port = 5432
+        to_port = 5432
+        protocol = "tcp"
+        security_groups = [aws_security_group.lambda_sg.id]
+    }
+
+    egress {
+        from_port = 0
+        to_port = 0
+        protocol = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    tags = {
+        Name = "musiql-rds-sg"
+    }
+}
+
+resource "aws_db_instance" "musiql_db" {
+    identifier = "musiql-db"
+    engine = "postgres"
+    engine_version = "16"
+    instance_class = "db.t3.micro"
+    allocated_storage = 20
+
+    db_name = "musiql"
+    username = "musiql_admin"
+    password = var.db_password
+
+    db_subnet_group_name = aws_db_subnet_group.musiql_db_subnet_group.name
+    vpc_security_group_ids = [aws_security_group.rds_sg.id]
+
+    publicly_accessible = false
+    skip_final_snapshot = true
+
+    tags = {
+        Name = "musiql-db"
+    }
+}
+
+resource "aws_security_group" "lambda_sg" {
+    name = "musiql-lambda-sg"
+    description = "Security group for Lambda functions"
+    vpc_id = aws_vpc.musiql_vpc.id
+
+    egress {
+        from_port = 0
+        to_port = 0
+        protocol = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    tags = {
+        Name = "musiql-lambda-sg"
+    }
+}
+
+resource "aws_secretsmanager_secret" "musiql_db_credentials" {
+    name = "musiql/db-credentials"
+
+    tags = {
+        Name = "musiql-db-credentials"
+    }
+}
+
+resource "aws_ecr_repository" "musiql_container_registry" {
+    name = "musiql/container-registry"
+
+    tags = {
+        Name = "musiql-container-registry"
+    }
+}
+
+resource "aws_iam_role" "lambda_role" {
+    name = "musiql-lambda-role-a17jjid1"
+    path = "/service-role/"
+    assume_role_policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [{
+            Action = "sts:AssumeRole"
+            Effect = "Allow"
+            Principal = {
+                Service = "lambda.amazonaws.com"
+            }
+        }]
+    })
+}
+
+resource "aws_lambda_function" "musiql_lambda" {
+    function_name = "musiql-lambda"
+    role = aws_iam_role.lambda_role.arn
+    package_type = "Image"
+    image_uri = "${aws_ecr_repository.musiql_container_registry.repository_url}:latest"
+
+    memory_size = 512
+    timeout = 900
+
+    vpc_config {
+        subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+        security_group_ids = [aws_security_group.lambda_sg.id]
+    }
+
+    environment {
+        variables = {
+            SECRET_ARN = aws_secretsmanager_secret.musiql_db_credentials.arn
+            ENV = "production"
+        }
+    }
+
+    tags = {
+        Name = "musiql-lambda"
+    }
+}
+
+resource "aws_apigatewayv2_api" "musiql_api" {
+    name = "musiql"
+    protocol_type = "HTTP"
+}
+
+resource "aws_apigatewayv2_stage" "default" {
+    api_id = aws_apigatewayv2_api.musiql_api.id
+    name = "$default"
+    auto_deploy = true
+}
+
+resource "aws_apigatewayv2_integration" "lambda" {
+    api_id = aws_apigatewayv2_api.musiql_api.id
+    integration_type = "AWS_PROXY"
+    integration_uri = aws_lambda_function.musiql_lambda.invoke_arn
+    payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "default" {
+    api_id = aws_apigatewayv2_api.musiql_api.id
+    route_key = "$default"
+    target = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
