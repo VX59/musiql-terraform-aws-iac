@@ -142,6 +142,14 @@ resource "aws_security_group" "bastion_sg" {
         cidr_blocks = [var.recording_server_ip]
     }
 
+    ingress {
+        description = "NAT - HTTPS from private subnets"
+        from_port   = 443
+        to_port     = 443
+        protocol    = "tcp"
+        cidr_blocks = ["10.0.1.0/24", "10.0.2.0/24"]
+    }
+
     egress {
         from_port = 0
         to_port = 0
@@ -175,11 +183,35 @@ resource "aws_instance" "bastion" {
     subnet_id = aws_subnet.public_a.id
     vpc_security_group_ids = [aws_security_group.bastion_sg.id]
     associate_public_ip_address = true
+    source_dest_check = false
     key_name = var.bastion_key_name
 
     tags = {
         Name = "musiql-bastion"
     }
+}
+
+resource "aws_route_table" "private" {
+    vpc_id = aws_vpc.musiql_vpc.id
+
+    route {
+        cidr_block           = "0.0.0.0/0"
+        network_interface_id = aws_instance.bastion.primary_network_interface_id
+    }
+
+    tags = {
+        Name = "musiql-private-rt"
+    }
+}
+
+resource "aws_route_table_association" "private_a" {
+    subnet_id      = aws_subnet.private_a.id
+    route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "private_b" {
+    subnet_id      = aws_subnet.private_b.id
+    route_table_id = aws_route_table.private.id
 }
 
 resource "aws_db_instance" "musiql_db" {
