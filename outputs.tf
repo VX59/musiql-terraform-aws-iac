@@ -21,3 +21,7 @@ output "db_credentials_secret_arn" {
 output "api_endpoint" {
     value = aws_apigatewayv2_api.musiql_api.api_endpoint
 }
+
+output "bastion_public_ip" {
+    value = aws_instance.bastion.public_ip
+}

@@ -13,3 +13,8 @@ variable "recording_server_ip" {
     type = string
     sensitive = true
 }
+
+variable "bastion_key_name" {
+    description = "Name of the EC2 key pair for the bastion SSH access"
+    type = string
+}

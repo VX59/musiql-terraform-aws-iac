@@ -72,6 +72,14 @@ resource "aws_security_group" "rds_sg" {
         security_groups = [aws_security_group.lambda_sg.id]
     }
 
+    ingress {
+        description = "Postgres from bastion"
+        from_port = 5432
+        to_port = 5432
+        protocol = "tcp"
+        security_groups = [aws_security_group.bastion_sg.id]
+    }
+
     egress {
         from_port = 0
         to_port = 0
@@ -81,6 +89,96 @@ resource "aws_security_group" "rds_sg" {
 
     tags = {
         Name = "musiql-rds-sg"
+    }
+}
+
+resource "aws_internet_gateway" "musiql_igw" {
+    vpc_id = aws_vpc.musiql_vpc.id
+
+    tags = {
+        Name = "musiql-igw"
+    }
+}
+
+resource "aws_subnet" "public_a" {
+    vpc_id = aws_vpc.musiql_vpc.id
+    cidr_block = "10.0.3.0/24"
+    availability_zone = "us-east-2a"
+    map_public_ip_on_launch = true
+
+    tags = {
+        Name = "musiql-public-a"
+    }
+}
+
+resource "aws_route_table" "public" {
+    vpc_id = aws_vpc.musiql_vpc.id
+
+    route {
+        cidr_block = "0.0.0.0/0"
+        gateway_id = aws_internet_gateway.musiql_igw.id
+    }
+
+    tags = {
+        Name = "musiql-public-rt"
+    }
+}
+
+resource "aws_route_table_association" "public_a" {
+    subnet_id = aws_subnet.public_a.id
+    route_table_id = aws_route_table.public.id
+}
+
+resource "aws_security_group" "bastion_sg" {
+    name = "musiql-bastion-sg"
+    description = "Allow ssh from home IP"
+    vpc_id = aws_vpc.musiql_vpc.id
+
+    ingress {
+        description = "SSH from home"
+        from_port = 22
+        to_port = 22
+        protocol = "tcp"
+        cidr_blocks = [var.recording_server_ip]
+    }
+
+    egress {
+        from_port = 0
+        to_port = 0
+        protocol = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    tags = {
+        Name = "musiql-bastion-sg"
+    }
+}
+
+data "aws_ami" "ubuntu" {
+    most_recent = true
+    owners = ["099720109477"] # Canonical's account ID
+
+    filter {
+        name = "name"
+        values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+    }
+
+    filter {
+        name = "state"
+        values = ["available"]
+    }
+}
+
+resource "aws_instance" "bastion" {
+    ami = data.aws_ami.ubuntu.id
+    instance_type = "t3.micro"
+    subnet_id = aws_subnet.public_a.id
+    vpc_security_group_ids = [aws_security_group.bastion_sg.id]
+    associate_public_ip_address = true
+    key_name = var.bastion_key_name
+
+    tags = {
+        Name = "musiql-bastion"
     }
 }
 
@@ -128,6 +226,44 @@ resource "aws_secretsmanager_secret" "musiql_db_credentials" {
 
     tags = {
         Name = "musiql-db-credentials"
+    }
+}
+
+resource "aws_security_group" "secretsmanager_endpoint_sg" {
+    name        = "musiql-secretsmanager-endpoint-sg"
+    description = "Allow HTTPS from Lambda to Secrets Manager VPC endpoint"
+    vpc_id      = aws_vpc.musiql_vpc.id
+
+    ingress {
+        description     = "HTTPS from Lambda"
+        from_port       = 443
+        to_port         = 443
+        protocol        = "tcp"
+        security_groups = [aws_security_group.lambda_sg.id]
+    }
+
+    egress {
+        from_port   = 0
+        to_port     = 0
+        protocol    = "-1"
+        cidr_blocks = ["0.0.0.0/0"]
+    }
+
+    tags = {
+        Name = "musiql-secretsmanager-endpoint-sg"
+    }
+}
+
+resource "aws_vpc_endpoint" "secretsmanager" {
+    vpc_id              = aws_vpc.musiql_vpc.id
+    service_name        = "com.amazonaws.us-east-2.secretsmanager"
+    vpc_endpoint_type   = "Interface"
+    subnet_ids          = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+    security_group_ids  = [aws_security_group.secretsmanager_endpoint_sg.id]
+    private_dns_enabled = true
+
+    tags = {
+        Name = "musiql-secretsmanager-endpoint"
     }
 }
 
