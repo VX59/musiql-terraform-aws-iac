@@ -34,8 +34,9 @@ resource "aws_subnet" "private_b" {
 
 # S3 Gateway Endpoint
 resource "aws_vpc_endpoint" "s3" {
-    vpc_id = aws_vpc.musiql_vpc.id
-    service_name = "com.amazonaws.us-east-2.s3"
+    vpc_id          = aws_vpc.musiql_vpc.id
+    service_name    = "com.amazonaws.us-east-2.s3"
+    route_table_ids = [aws_route_table.private.id]
 
     tags = {
         Name = "musiql-s3-endpoint"
