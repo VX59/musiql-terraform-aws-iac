@@ -323,6 +323,8 @@ resource "aws_iam_role" "lambda_role" {
     })
 }
 
+
+
 resource "aws_lambda_function" "musiql_lambda" {
     function_name = "musiql-lambda"
     role = aws_iam_role.lambda_role.arn
@@ -349,6 +351,32 @@ resource "aws_lambda_function" "musiql_lambda" {
     }
 }
 
+resource "aws_lambda_function" "musiql_lambda_sb" {
+    function_name = "musiql-lambda-dev"
+    role = aws_iam_role.lambda_role.arn
+    package_type = "Image"
+    image_uri = "${aws_ecr_repository.musiql_container_registry.repository_url}:latest"
+
+    memory_size = 512
+    timeout = 900
+
+    vpc_config {
+        subnet_ids = [aws_subnet.private_a.id, aws_subnet.private_b.id]
+        security_group_ids = [aws_security_group.lambda_sg.id]
+    }
+
+    environment {
+        variables = {
+            SECRET_ARN = aws_secretsmanager_secret.musiql_db_credentials.arn
+            ENV = "dev"
+        }
+    }
+
+    tags = {
+        Name = "musiql-lambda-dev"
+    }
+}
+
 resource "aws_apigatewayv2_api" "musiql_api" {
     name = "musiql"
     protocol_type = "HTTP"
@@ -371,4 +399,46 @@ resource "aws_apigatewayv2_route" "default" {
     api_id = aws_apigatewayv2_api.musiql_api.id
     route_key = "$default"
     target = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+resource "aws_lambda_permission" "apigw_prod" {
+    statement_id  = "AllowAPIGatewayInvoke"
+    action        = "lambda:InvokeFunction"
+    function_name = aws_lambda_function.musiql_lambda.function_name
+    principal     = "apigateway.amazonaws.com"
+    source_arn    = "${aws_apigatewayv2_api.musiql_api.execution_arn}/*/*"
+}
+
+# Dev API Gateway
+
+resource "aws_apigatewayv2_api" "musiql_api_dev" {
+    name = "musiql-dev"
+    protocol_type = "HTTP"
+}
+
+resource "aws_apigatewayv2_stage" "dev_default" {
+    api_id = aws_apigatewayv2_api.musiql_api_dev.id
+    name = "$default"
+    auto_deploy = true
+}
+
+resource "aws_apigatewayv2_integration" "lambda_dev" {
+    api_id = aws_apigatewayv2_api.musiql_api_dev.id
+    integration_type = "AWS_PROXY"
+    integration_uri = aws_lambda_function.musiql_lambda_sb.invoke_arn
+    payload_format_version = "2.0"
+}
+
+resource "aws_apigatewayv2_route" "dev_default" {
+    api_id = aws_apigatewayv2_api.musiql_api_dev.id
+    route_key = "$default"
+    target = "integrations/${aws_apigatewayv2_integration.lambda_dev.id}"
+}
+
+resource "aws_lambda_permission" "apigw_dev" {
+    statement_id  = "AllowAPIGatewayInvoke"
+    action        = "lambda:InvokeFunction"
+    function_name = aws_lambda_function.musiql_lambda_sb.function_name
+    principal     = "apigateway.amazonaws.com"
+    source_arn    = "${aws_apigatewayv2_api.musiql_api_dev.execution_arn}/*/*"
 }
