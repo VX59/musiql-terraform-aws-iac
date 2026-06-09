@@ -333,6 +333,23 @@ resource "aws_iam_role" "lambda_role" {
 
 
 
+resource "aws_iam_role_policy" "lambda_secrets_policy" {
+    name = "musiql-lambda-secrets-policy"
+    role = aws_iam_role.lambda_role.id
+
+    policy = jsonencode({
+        Version = "2012-10-17"
+        Statement = [{
+            Effect   = "Allow"
+            Action   = "secretsmanager:GetSecretValue"
+            Resource = [
+                aws_secretsmanager_secret.musiql_db_credentials.arn,
+                aws_secretsmanager_secret.musiql_db_credentials_dev.arn,
+            ]
+        }]
+    })
+}
+
 resource "aws_lambda_function" "musiql_lambda" {
     function_name = "musiql-lambda"
     role = aws_iam_role.lambda_role.arn
