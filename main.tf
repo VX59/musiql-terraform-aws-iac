@@ -262,6 +262,14 @@ resource "aws_secretsmanager_secret" "musiql_db_credentials" {
     }
 }
 
+resource "aws_secretsmanager_secret" "musiql_db_credentials_dev" {
+    name = "musiql/db-credentials-dev"
+
+    tags = {
+        Name = "musiql-db-credentials-dev"
+    }
+}
+
 resource "aws_security_group" "secretsmanager_endpoint_sg" {
     name        = "musiql-secretsmanager-endpoint-sg"
     description = "Allow HTTPS from Lambda to Secrets Manager VPC endpoint"
@@ -342,7 +350,10 @@ resource "aws_lambda_function" "musiql_lambda" {
     environment {
         variables = {
             SECRET_ARN = aws_secretsmanager_secret.musiql_db_credentials.arn
-            ENV = "production"
+            ENV        = "production"
+            DB_PORT    = "5432"
+            DB_NAME    = "musiql"
+            S3_BUCKET  = "musiql-s3-bucket"
         }
     }
 
@@ -367,8 +378,11 @@ resource "aws_lambda_function" "musiql_lambda_sb" {
 
     environment {
         variables = {
-            SECRET_ARN = aws_secretsmanager_secret.musiql_db_credentials.arn
-            ENV = "dev"
+            SECRET_ARN = aws_secretsmanager_secret.musiql_db_credentials_dev.arn
+            ENV        = "dev"
+            DB_PORT    = "5432"
+            DB_NAME    = "musiql"
+            S3_BUCKET  = "musiql-s3-bucket"
         }
     }
 
@@ -380,6 +394,13 @@ resource "aws_lambda_function" "musiql_lambda_sb" {
 resource "aws_apigatewayv2_api" "musiql_api" {
     name = "musiql"
     protocol_type = "HTTP"
+
+    cors_configuration {
+        allow_origins = ["*"]
+        allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+        allow_headers = ["content-type", "authorization"]
+        max_age = 3600
+    }
 }
 
 resource "aws_apigatewayv2_stage" "default" {
@@ -414,6 +435,13 @@ resource "aws_lambda_permission" "apigw_prod" {
 resource "aws_apigatewayv2_api" "musiql_api_dev" {
     name = "musiql-dev"
     protocol_type = "HTTP"
+
+    cors_configuration {
+        allow_origins = ["*"]
+        allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+        allow_headers = ["content-type", "authorization"]
+        max_age = 3600
+    }
 }
 
 resource "aws_apigatewayv2_stage" "dev_default" {
