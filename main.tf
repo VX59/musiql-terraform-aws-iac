@@ -368,7 +368,7 @@ resource "aws_lambda_function" "musiql_lambda_sb" {
     environment {
         variables = {
             SECRET_ARN = aws_secretsmanager_secret.musiql_db_credentials.arn
-            ENV = "production"
+            ENV = "dev"
         }
     }
 
