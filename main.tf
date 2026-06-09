@@ -355,7 +355,7 @@ resource "aws_lambda_function" "musiql_lambda_sb" {
     function_name = "musiql-lambda-dev"
     role = aws_iam_role.lambda_role.arn
     package_type = "Image"
-    image_uri = "${aws_ecr_repository.musiql_container_registry.repository_url}:latest"
+    image_uri = "${aws_ecr_repository.musiql_container_registry.repository_url}:dev"
 
     memory_size = 512
     timeout = 900
@@ -368,7 +368,7 @@ resource "aws_lambda_function" "musiql_lambda_sb" {
     environment {
         variables = {
             SECRET_ARN = aws_secretsmanager_secret.musiql_db_credentials.arn
-            ENV = "dev"
+            ENV = "production"
         }
     }
 
