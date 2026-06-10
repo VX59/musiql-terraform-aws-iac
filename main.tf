@@ -187,6 +187,15 @@ resource "aws_instance" "bastion" {
     source_dest_check = false
     key_name = var.bastion_key_name
 
+    user_data = <<-EOF
+        #!/bin/bash
+        echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf
+        sysctl -p
+        iptables -t nat -A POSTROUTING -o ens5 -s 10.0.0.0/16 -j MASQUERADE
+        apt-get install -y iptables-persistent
+        netfilter-persistent save
+    EOF
+
     tags = {
         Name = "musiql-bastion"
     }
